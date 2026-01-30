@@ -22,7 +22,7 @@ import java.security.NoSuchAlgorithmException;
 public class WASBaseClient {
     WASAuth auth;
     protected PrintStream stream;
-    protected int timeout = 30;
+    protected int timeout = 300;
 
     public WASBaseClient(WASAuth auth) {
         this.auth = auth;
