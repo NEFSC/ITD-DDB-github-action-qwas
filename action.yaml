@@ -77,7 +77,7 @@ runs:
     - name: Setting up GitHub Repository
       uses: actions/checkout@v4
       with:
-        repository: Qualys/github-action-qwas
+        repository: NEFSC/ITD-DDB-github-action-qwas
 
     - name: Setting up Maven Wrapper
       if: runner.os != 'Windows'
