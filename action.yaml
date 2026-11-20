@@ -11,14 +11,33 @@ branding:
 
 inputs:
   QUALYS_USERNAME:
-    description: "Qualys Username"
-    required: true
+    description: "Qualys Username (required for BASIC)"
+    required: false
   QUALYS_PASSWORD:
-    description: "Qualys Password"
-    required: true
+    description: "Qualys Password (required for BASIC)"
+    required: false
   API_SERVER:
-    description: "API Server URL"
+    description: "Qualys API Server URL (e.g. https://qualysapi.qualys.com)"
     required: true
+  AUTH_TYPE:
+    description: "Auth Type (BASIC, OAUTH, or IDP)"
+    required: false
+    default: BASIC
+  CLIENT_ID:
+    description: "Qualys API Client ID (for OAUTH/IDP)"
+    required: false
+  CLIENT_SECRET:
+    description: "Qualys API Client Secret (for OAUTH/IDP)"
+    required: false
+  IDP_TOKEN_URL:
+    description: "IDP Token URL (for IDP auth)"
+    required: false
+  IDP_SCOPE:
+    description: "IDP Scope (for IDP auth)"
+    required: false
+  IDP_AUDIENCE:
+    description: "IDP Audience (for IDP auth)"
+    required: false
   SCAN_NAME:
     description: "Scan Name"
     required: true
@@ -31,12 +50,14 @@ inputs:
   AUTH_RECORD:
     description: "Authentication Record"
     required: false
+    default: "none"
   AUTH_RECORD_ID:
     description: "Authentication Record ID"
     required: false
   OPTION_PROFILE:
     description: "Option Profile"
     required: false
+    default: "useDefault"
   OPTION_PROFILE_ID:
     description: "Option Profile ID"
     required: false
@@ -70,51 +91,77 @@ inputs:
   FILE_TYPE:
     description: "File format to download artifact"
     required: false
+  ARTIFACT_NAME:
+    description: "Name for the scan result artifact"
+    required: false
+    default: Qualys_WAS_Scan_Result
+  ARTIFACT_RETENTION_DAYS:
+    description: "Days to retain the scan result artifact (1-90). Defaults to the repository/organization artifact retention setting."
+    required: false
+  SEND_MAIL:
+    description: "Send scan complete email notifications (default true). Set to false to disable."
+    required: false
+    default: "true"
+
+outputs:
+  scan_id:
+    description: "Numeric ID returned by Qualys when WAIT_FOR_RESULT is false"
+    value: ${{ steps.run-app.outputs.scan_id }}
 
 runs:
   using: composite
   steps:
-    - name: Setting up GitHub Repository
-      uses: actions/checkout@v4
-      with:
-        repository: NEFSC/ITD-DDB-github-action-qwas
-
-    - name: Setting up Maven Wrapper
-      if: runner.os != 'Windows'
-      run: chmod +x ./mvnw
+    - name: Prepare the selected action version
+      id: prepare
       shell: bash
+      run: |
+        directory=$(mktemp -d "$RUNNER_TEMP/qwas-action.XXXXXXXX")
+        cp -R "$GITHUB_ACTION_PATH"/{.mvn,mvnw,mvnw.cmd,pom.xml,src} "$directory/"
+        mkdir "$directory/scan"
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          directory=$(cygpath -m "$directory")
+        fi
+        printf 'directory=%s\n' "$directory" >> "$GITHUB_OUTPUT"
+        if command -v sha256sum >/dev/null; then
+          checksum=$(sha256sum < "$directory/pom.xml")
+        else
+          checksum=$(shasum -a 256 < "$directory/pom.xml")
+        fi
+        printf 'pom_hash=%s\n' "${checksum%% *}" >> "$GITHUB_OUTPUT"
 
     - name: Setting up Java Environment
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'oracle'
-
+    
     - name: Caching Maven dependencies
       uses: actions/cache@v4
       with:
         path: ~/.m2/repository
-        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+        key: ${{ runner.os }}-maven-${{ steps.prepare.outputs.pom_hash }}
         restore-keys: |
           ${{ runner.os }}-maven-
-
+    
     - name: Building plugin with Maven
-      run: ./mvnw clean package
+      run: bash ./mvnw clean package
       shell: bash
-
-    - name: Storing Maven dependencies in cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.m2/repository
-        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-
+      working-directory: ${{ steps.prepare.outputs.directory }}
+    
     - name: Spinning up Qualys WAS Scan Plugin
-      run: java -jar ./target/GitHubActionsQWas-0.0.1-SNAPSHOT.jar
+      run: java -jar ../target/GitHubActionsQWas-0.0.1-SNAPSHOT.jar
       id: run-app
+      working-directory: ${{ steps.prepare.outputs.directory }}/scan
       env:
         API_SERVER: ${{ inputs.API_SERVER }}
+        AUTH_TYPE: ${{ inputs.AUTH_TYPE }}
         QUALYS_USERNAME: ${{ inputs.QUALYS_USERNAME }}
         QUALYS_PASSWORD: ${{ inputs.QUALYS_PASSWORD }}
+        CLIENT_ID: ${{ inputs.CLIENT_ID }}
+        CLIENT_SECRET: ${{ inputs.CLIENT_SECRET }}
+        IDP_TOKEN_URL: ${{ inputs.IDP_TOKEN_URL }}
+        IDP_SCOPE: ${{ inputs.IDP_SCOPE }}
+        IDP_AUDIENCE: ${{ inputs.IDP_AUDIENCE }}
         WEBAPP_ID: ${{ inputs.WEBAPP_ID }}
         SCAN_NAME: ${{ inputs.SCAN_NAME }}
         SCAN_TYPE: ${{ inputs.SCAN_TYPE }}
@@ -132,16 +179,20 @@ runs:
         INTERVAL: ${{ inputs.INTERVAL }}
         TIMEOUT: ${{ inputs.TIMEOUT }}
         FILE_TYPE: ${{ inputs.FILE_TYPE }}
+        SEND_MAIL: ${{ inputs.SEND_MAIL }}
       continue-on-error: true
       shell: bash
-
+    
     - name: Uploading Qualys WAS Scan Result
       uses: actions/upload-artifact@v4
       with:
-        name: Qualys_WAS_Scan_Result
-        path: ./outputs/
-
+        name: ${{ inputs.ARTIFACT_NAME }}
+        path: ${{ steps.prepare.outputs.directory }}/scan/outputs/
+        retention-days: ${{ inputs.ARTIFACT_RETENTION_DAYS }}
+    
     - name: Checking for Qualys WAS Scan Plugin Failure
-      if: steps.run-app.outcome != 'success'
-      run: exit 1
+      if: steps.run-app.outcome != 'success' || (inputs.WAIT_FOR_RESULT == 'false' && steps.run-app.outputs.scan_id == '')
+      run: |
+        echo "::error::Qualys scan failed or did not return the launch ID."
+        exit 1
       shell: bash
