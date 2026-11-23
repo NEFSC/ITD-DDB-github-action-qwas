@@ -130,13 +130,14 @@ runs:
         printf 'pom_hash=%s\n' "${checksum%% *}" >> "$GITHUB_OUTPUT"
 
     - name: Setting up Java Environment
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
       with:
         java-version: '17'
         distribution: 'oracle'
+        problem-matcher: true
     
     - name: Caching Maven dependencies
-      uses: actions/cache@v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.m2/repository
         key: ${{ runner.os }}-maven-${{ steps.prepare.outputs.pom_hash }}
@@ -184,7 +185,7 @@ runs:
       shell: bash
     
     - name: Uploading Qualys WAS Scan Result
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.ARTIFACT_NAME }}
         path: ${{ steps.prepare.outputs.directory }}/scan/outputs/
